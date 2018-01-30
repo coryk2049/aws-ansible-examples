@@ -1,0 +1,8 @@
+---
+ami_name:           "ami-8c1be5f6"
+ec2_instance_type:  "t2.micro"
+ec2_key_name:       "aws_cory1"
+ec2_role_name:      "DEV-ACCESS"
+ec2_instance_count: 1
+a_ec2_dmz_name:     "A-DMZ"
+b_ec2_dmz_name:     "B-DMZ"

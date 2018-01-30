@@ -1,0 +1,29 @@
+---
+- hosts:        local
+#  strategy:    debug
+  connection:   local
+  gather_facts: no
+  remote_user:  ec2-user
+  become:       yes
+
+  pre_tasks:
+    - name:     Some pretask prior to roles
+      shell: >
+        whoami;
+        date
+      register: my_cmd
+    - debug:    var=my_cmd
+
+  roles:
+    - vpc
+#    - iam
+    - ec2
+    - elb
+
+  post_tasks:
+    - name:     Some post task after roles
+      shell: >
+        whoami;
+        date
+      register: my_cmd
+    - debug:    var=my_cmd

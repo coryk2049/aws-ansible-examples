@@ -1,0 +1,81 @@
+---
+
+- name:                      Create target group for Nginx
+  elb_target_group:
+    name:                    nginx
+    protocol:                http
+    port:                    80
+    vpc_id:                  "{{ vpc_id }}"
+    health_check_path:       "/index.html"
+    state:                   present
+  register:                  my_tg_nginx
+- debug:                     var=my_tg_nginx
+
+- name:                      Create target group for Apache
+  elb_target_group:
+    name:                    apache
+    protocol:                http
+    port:                    80
+    vpc_id:                  "{{ vpc_id }}"
+    health_check_path:       "/index.html"
+    state:                   present
+  register:                  my_tg_apache
+- debug:                     var=my_tg_apache
+
+- name:                      Create ALB listening on port 80
+  elb_application_lb:
+    name:                    "{{ alb_name }}"
+    subnets:
+      - "{{ a_dmz_pub_subnet_id }}"
+      - "{{ b_dmz_pub_subnet_id }}"
+    security_groups:
+      - "{{ my_dmz_sg.group_id }}"
+    listeners:
+      - Protocol:            HTTP
+        Port:                80
+        DefaultActions:
+          - Type:            forward
+            TargetGroupName: "apache"
+    state:                   present
+    tags:
+      Name:                  "{{ alb_name }}"
+      Type:                  "Public"
+      Tier:                  "DMZ"
+  register:                  my_alb
+- debug:                     var=my_alb
+
+- pause:
+    seconds:                 3
+
+- name:                      Register target group A
+  command:                   aws elbv2 register-targets \
+    --target-group-arn "{{ my_tg_nginx.target_group_arn }}" \
+    --targets Id="{{ item.id }}"
+  with_items:                "{{ my_a_dmz.tagged_instances }}"
+  register:                  my_reg_tg_nginx
+- debug:                     var=my_reg_tg_nginx
+
+- name:                      Register target group B
+  command:                   aws elbv2 register-targets \
+    --target-group-arn "{{ my_tg_apache.target_group_arn }}" \
+    --targets Id="{{ item.id }}"
+  with_items:                "{{ my_b_dmz.tagged_instances }}"
+  register:                  my_reg_tg_apache
+- debug:                     var=my_reg_tg_apache
+
+- name:                      Create target group A path rules in ALB
+  command:                   aws elbv2 create-rule \
+    --listener-arn "{{ my_alb.listeners[0].listener_arn }}" \
+    --priority 10 \
+    --conditions Field=path-pattern,Values='/nginx.html' \
+    --actions Type=forward,TargetGroupArn="{{ my_tg_nginx.target_group_arn }}"
+  register:                  my_tg_nginx_rule
+- debug:                     var=my_tg_nginx_rule
+
+- name:                      Create target group B path rules in ALB
+  command:                   aws elbv2 create-rule \
+    --listener-arn "{{ my_alb.listeners[0].listener_arn }}" \
+    --priority 15 --conditions Field=path-pattern,Values='/apache.html' \
+    --actions Type=forward,TargetGroupArn="{{ my_tg_apache.target_group_arn }}"
+  register:                  my_tg_apache_rule
+- debug:                     var=my_tg_apache_rule

@@ -1,0 +1,12 @@
+[pri-dmz]
+A-DMZ,20.0.100.159,ip-20-0-100-159.ec2.internal,i-0cdbe1d421a171da8
+[pub-dmz]
+A-DMZ,54.236.240.110,ec2-54-236-240-110.compute-1.amazonaws.com,i-0cdbe1d421a171da8
+[pri-rpxy]
+A-RevProxy,20.0.100.134,ip-20-0-100-134.ec2.internal,i-09ad56bef44e34a53
+[pub-rpxy]
+A-RevProxy,35.170.58.236,ec2-35-170-58-236.compute-1.amazonaws.com,i-09ad56bef44e34a53
+[pri-web]
+A-WebServer,20.0.10.252,ip-20-0-10-252.ec2.internal,i-0a3530314f62d22dc
+[pri-db]
+A-DbServer,20.0.20.51,ip-20-0-20-51.ec2.internal,i-062f3da1197089cad

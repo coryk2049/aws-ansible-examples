@@ -1,0 +1,185 @@
+---
+- name:                        Get existing EC2 instance profile associations
+  command:                     aws ec2 describe-iam-instance-profile-associations
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+
+- name:                        Get existing EC2 instance profile associations as json
+  set_fact:
+    my_ec2_pas_json:           "{{ my_cmd.stdout|from_json }}"
+
+- name:                        Disassociate any existing EC2 instance profiles
+  command:                     aws ec2 disassociate-iam-instance-profile \
+    --association-id "{{ item.AssociationId }}"
+  with_items:                  "{{ my_ec2_pas_json.IamInstanceProfileAssociations }}"
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- name:                        Remove role from any EC2 instance profiles
+  command:                     aws iam remove-role-from-instance-profile \
+    --instance-profile-name "{{ item }}" \
+    --role-name "{{ ec2_role_name }}"
+  with_items:
+    - "{{ a_ec2_dmz_name }}"
+    - "{{ b_ec2_dmz_name }}"
+  ignore_errors:               yes
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- name:                        Delete any EC2 instance profiles
+  command:                     aws iam delete-instance-profile \
+    --instance-profile-name "{{ item }}"
+  with_items:
+    - "{{ a_ec2_dmz_name }}"
+    - "{{ b_ec2_dmz_name }}"
+  ignore_errors:               yes
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- name:                        Create EC2 instance profiles
+  command:                     aws iam create-instance-profile \
+    --instance-profile-name "{{ item }}"
+  with_items:
+    - "{{ a_ec2_dmz_name }}"
+    - "{{ b_ec2_dmz_name }}"
+  ignore_errors:               yes
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- name:                        Add role to EC2 instance profiles
+  command:                     aws iam add-role-to-instance-profile \
+    --role-name "{{ ec2_role_name }}" \
+    --instance-profile-name "{{ item }}"
+  with_items:
+    - "{{ a_ec2_dmz_name }}"
+    - "{{ b_ec2_dmz_name }}"
+  ignore_errors:               yes
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- pause:
+    seconds:                   3
+
+- name:                        A-DMZ - Create EC2 instance
+  ec2:
+    region:                    "{{ vpc_region }}"
+    group_id:                  "{{ my_dmz_sg.group_id }}"
+    keypair:                   "{{ ec2_key_name }}"
+    instance_type:             "{{ ec2_instance_type }}"
+#    instance_profile_name:    "{{ ec2_dmz_name }}"
+    user_data:                 |
+      #!/bin/sh
+      yum update -y
+      yum install nginx git -y
+      service nginx start
+      cp /usr/share/nginx/html/index.html /usr/share/nginx/html/nginx.html
+      chkconfig nginx on
+    image:                     "{{ ami_name }}"
+    wait:                      yes
+    wait_timeout:              500
+    vpc_subnet_id:             "{{ a_dmz_pub_subnet_id }}"
+    assign_public_ip:          yes
+    instance_tags:
+      Environment:             "{{ env_name }}"
+      Name:                    "{{ a_ec2_dmz_name }}"
+    count_tag:
+      - Environment:           "{{ env_name }}"
+      - Name:                  "{{ a_ec2_dmz_name }}"
+    exact_count:               "{{ ec2_instance_count }}"
+    volumes:
+      - device_name:           /dev/xvda
+        volume_type:           gp2
+        volume_size:           8
+        delete_on_termination: yes
+  register:                    my_a_dmz
+- debug:                       var=my_a_dmz
+
+- name:                        A-DMZ - Store EC2 instance ip
+  add_host:
+    hostname:                  "{{ item.public_ip }}"
+    groupname:                 my_a_dmz_ec2_instance_ips
+  with_items:                  "{{ my_a_dmz.tagged_instances }}"
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- name:                        A-DMZ - Wait for SSH to come up
+  wait_for:
+    host:                      "{{ item.public_ip }}"
+    port:                      22
+    delay:                     60
+    timeout:                   300
+    state:                     started
+  with_items:                  "{{ my_a_dmz.tagged_instances }}"
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- name:                        A-DMZ - Associate EC2 instance profile
+  command:                     aws ec2 associate-iam-instance-profile \
+    --instance-id "{{ item.id }}" \
+    --iam-instance-profile Name="{{ a_ec2_dmz_name }}"
+  with_items:                  "{{ my_a_dmz.tagged_instances }}"
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+
+- name:                        B-DMZ - Create EC2 instance
+  ec2:
+    region:                    "{{ vpc_region }}"
+    group_id:                  "{{ my_dmz_sg.group_id }}"
+    keypair:                   "{{ ec2_key_name }}"
+    instance_type:             "{{ ec2_instance_type }}"
+#    instance_profile_name:    "{{ ec2_dmz_name }}"
+    user_data:                 |
+      #!/bin/sh
+      yum update -y
+      yum install httpd24 php56 -y
+      cp /var/www/noindex/index.html /var/www/html
+      cp /var/www/noindex/index.html /var/www/html/apache.html
+      service httpd start
+      chkconfig httpd on
+    image:                     "{{ ami_name }}"
+    wait:                      yes
+    wait_timeout:              500
+    vpc_subnet_id:             "{{ b_dmz_pub_subnet_id }}"
+    assign_public_ip:          yes
+    instance_tags:
+      Environment:             "{{ env_name }}"
+      Name:                    "{{ b_ec2_dmz_name }}"
+    count_tag:
+      - Environment:           "{{ env_name }}"
+      - Name:                  "{{ b_ec2_dmz_name }}"
+    exact_count:               "{{ ec2_instance_count }}"
+    volumes:
+      - device_name:           /dev/xvda
+        volume_type:           gp2
+        volume_size:           8
+        delete_on_termination: yes
+  register:                    my_b_dmz
+- debug:                       var=my_b_dmz
+
+- name:                        B-DMZ - Store EC2 instance ip
+  add_host:
+    hostname:                  "{{ item.public_ip }}"
+    groupname:                 my_b_dmz_ec2_instance_ips
+  with_items:                  "{{ my_b_dmz.tagged_instances }}"
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- name:                        B-DMZ - Wait for SSH to come up
+  wait_for:
+    host:                      "{{ item.public_ip }}"
+    port:                      22
+    delay:                     60
+    timeout:                   300
+    state:                     started
+  with_items:                  "{{ my_b_dmz.tagged_instances }}"
+  register:                    my_cmd
+- debug:                       var=my_cmd
+
+- name:                        B-DMZ - Associate EC2 instance profile
+  command:                     aws ec2 associate-iam-instance-profile \
+    --instance-id "{{ item.id }}" \
+    --iam-instance-profile Name="{{ b_ec2_dmz_name }}"
+  with_items:                  "{{ my_b_dmz.tagged_instances }}"
+  register:                    my_cmd
+- debug:                       var=my_cmd

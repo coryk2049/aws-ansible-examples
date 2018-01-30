@@ -1,0 +1,5 @@
+---
+iam_users:          ['test1','test2','test3']
+iam_group:          "TEST"
+#iam_role:           "{{ iam_group }}-ACCESS"
+iam_role:           "DEV-ACCESS

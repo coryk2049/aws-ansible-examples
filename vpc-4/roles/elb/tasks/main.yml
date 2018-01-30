@@ -1,0 +1,82 @@
+---
+- name:                          Create classic ELB listening on port 80
+  local_action:
+    module:                      ec2_elb_lb
+    name:                        "{{ elb_name }}"
+    state:                       present
+    region:                      "{{ vpc_region }}"
+    wait:                        yes
+    wait_timeout:                500
+    connection_draining_timeout: 60
+    idle_timeout:                300
+    cross_az_load_balancing:     "yes"
+    security_group_ids:
+      - "{{ my_dmz_sg.group_id }}"
+    subnets:
+      - "{{ a_dmz_pub_subnet_id }}"
+      - "{{ b_dmz_pub_subnet_id }}"
+    listeners:
+      - protocol:                http
+        load_balancer_port:      80
+        instance_port:           80
+    health_check:
+        ping_protocol:           http
+        ping_port:               80
+        ping_path:               "/index.html"
+        response_timeout:        5
+        interval:                30
+        unhealthy_threshold:     2
+        healthy_threshold:       10
+    tags:
+      Name:                      "{{ elb_name }}"
+      Type:                      "Public"
+      Tier:                      "DMZ"
+  register:                      my_elb
+- debug:                         var=my_elb
+
+- name:                          List any classic ELB policies
+  command:                       aws elb describe-load-balancers --load-balancer-name "{{ elb_name }}"
+  ignore_errors:                 yes
+  register:                      my_cmd
+- debug:                         var=my_cmd
+
+- name:                          Disable all classic ELB policies
+  command:                       aws elb set-load-balancer-policies-for-backend-server \
+    --load-balancer-name "{{ elb_name }}" \
+    --instance-port 80 \
+    --policy-names "[]"
+  ignore_errors:                 yes
+  register:                      my_cmd
+- debug:                         var=my_cmd
+
+- name:                          Enable proxy protocol for classic ELB
+  command:                       aws elb create-load-balancer-policy \
+    --load-balancer-name "{{ elb_name }}" \
+    --policy-name my-ProxyProtocol-policy \
+    --policy-type-name ProxyProtocolPolicyType \
+    --policy-attributes AttributeName=ProxyProtocol,AttributeValue=true
+  ignore_errors:                 yes
+  register:                      my_cmd
+- debug:                         var=my_cmd
+
+- name:                          A-DMZ - Register EC2 instances to classic ELB
+  local_action:
+    module:                      ec2_elb
+    state:                       present
+    region:                      "{{ vpc_region }}"
+    ec2_elbs:                    "{{ elb_name }}"
+    instance_id:                 "{{ item.id }}"
+  with_items:                    "{{ my_a_dmz.tagged_instances }}"
+  register:                      my_cmd
+- debug:                         var=my_cmd
+
+- name:                          B-DMZ - Register EC2 instances to classic ELB
+  local_action:
+    module:                      ec2_elb
+    state:                       present
+    region:                      "{{ vpc_region }}"
+    ec2_elbs:                    "{{ elb_name }}"
+    instance_id:                 "{{ item.id }}"
+  with_items:                    "{{ my_b_dmz.tagged_instances }}"
+  register:                      my_cmd
+- debug:                         var=my_cmd

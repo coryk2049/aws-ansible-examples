@@ -1,0 +1,11 @@
+---
+env_name:            "POC"
+vpc_name:            "POC"
+vpc_region:          "us-east-1"
+vpc_cidr_block:      "20.0.0.0/16"
+dmz_pub_subnet_cidr: "20.0.100.0/24"
+dmz_pub_subnet_az:   "{{ vpc_region }}a"
+web_pri_subnet_cidr: "20.0.10.0/24"
+web_pri_subnet_az:   "{{ vpc_region }}a"
+db_pri_subnet_cidr:  "20.0.20.0/24"
+db_pri_subnet_az:    "{{ vpc_region }}a"

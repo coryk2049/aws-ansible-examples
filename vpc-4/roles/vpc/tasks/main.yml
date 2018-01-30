@@ -1,0 +1,96 @@
+---
+- name:                          Create VPC
+  ec2_vpc_net:
+    state:                       present
+    region:                      "{{ vpc_region }}"
+    name:                        "{{ vpc_name }}"
+    cidr_block:                  "{{ vpc_cidr_block }}"
+    resource_tags:
+      Name:                      "{{ vpc_name }}"
+      Environment:               "{{env_name}}"
+  register:                      my_vpc
+#- debug:                        var=my_vpc
+- set_fact:
+    vpc_id:                      "{{ my_vpc.vpc.id }}"
+
+- name:                          A - Create DMZ public subnet
+  ec2_vpc_subnet:
+    state:                       present
+    region:                      "{{ vpc_region }}"
+    vpc_id:                      "{{ vpc_id }}"
+    cidr:                        "{{ a_dmz_pub_subnet_cidr }}"
+    az:                          "{{ a_dmz_pub_subnet_az }}"
+    resource_tags:
+      Name:                      "{{ a_dmz_pub_subnet_cidr }}|{{ a_dmz_pub_subnet_az }}"
+      Type:                      "Public"
+      Tier:                      "DMZ"
+  register:                      my_a_dmz_pub_subnet
+#- debug:                        var=my_a_dmz_pub_subnet
+- set_fact:
+    a_dmz_pub_subnet_id:         "{{ my_a_dmz_pub_subnet.subnet.id }}"
+
+- name:                          B - Create DMZ public subnet
+  ec2_vpc_subnet:
+    state:                       present
+    region:                      "{{ vpc_region }}"
+    vpc_id:                      "{{ vpc_id }}"
+    cidr:                        "{{ b_dmz_pub_subnet_cidr }}"
+    az:                          "{{ b_dmz_pub_subnet_az }}"
+    resource_tags:
+      Name:                      "{{ b_dmz_pub_subnet_cidr }}|{{ b_dmz_pub_subnet_az }}"
+      Type:                      "Public"
+      Tier:                      "DMZ"
+  register:                      my_b_dmz_pub_subnet
+#- debug:                        var=my_b_dmz_pub_subnet
+- set_fact:
+    b_dmz_pub_subnet_id:         "{{ my_b_dmz_pub_subnet.subnet.id }}"
+
+- name:                          Create Internet gateway
+  ec2_vpc_igw:
+    state:                       present
+    region:                      "{{ vpc_region }}"
+    vpc_id:                      "{{ vpc_id }}"
+    resource_tags:
+      Name:                      "IGW"
+      Type:                      "Public"
+  register:                      my_igw
+#- debug:                        var=my_igw
+- set_fact:
+    igw_id:                      "{{ my_igw.gateway_id }}"
+
+- name:                          Setup public subnet routes
+  ec2_vpc_route_table:
+    state:                       present
+    region:                      "{{ vpc_region }}"
+    vpc_id:                      "{{ vpc_id }}"
+    tags:
+      Name:                      "PublicRoute"
+    subnets:
+      - "{{ a_dmz_pub_subnet_id }}"
+      - "{{ b_dmz_pub_subnet_id }}"
+    routes:
+      - dest:                    "0.0.0.0/0"
+        gateway_id:              "{{ igw_id }}"
+  register:                      my_pub_rt
+#- debug:                        var=my_pub_rt
+
+- name:                          Create DMZ security group
+  ec2_group:
+    name:                        "DMZ-SG"
+    description:                 "Allow SSH/HTTP/HTTPS access"
+    vpc_id:                      "{{ vpc_id }}"
+    rules:
+      - proto:                   tcp
+        from_port:               22
+        to_port:                 22
+        cidr_ip:                 0.0.0.0/0
+      - proto:                   tcp
+        from_port:               80
+        to_port:                 80
+        cidr_ip:                 0.0.0.0/0
+      - proto:                   tcp
+        from_port:               443
+        to_port:                 443
+        cidr_ip:                 0.0.0.0/0
+  register:                      my_dmz_sg
+#- debug:                        var=my_dmz_sg

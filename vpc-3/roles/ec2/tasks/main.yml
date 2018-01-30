@@ -1,0 +1,250 @@
+---
+- name:                        Get existing EC2 instance profile associations
+  command:                     "aws ec2 describe-iam-instance-profile-associations"
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+- name:                        Get existing EC2 instance profile associations as json
+  set_fact:
+    my_ec2_pas_json:           "{{ my_cmd.stdout|from_json }}"
+- name:                        Disassociate any existing EC2 instance profiles
+  command:                     "aws ec2 disassociate-iam-instance-profile --association-id {{ item.AssociationId }}"
+  with_items:                  "{{ my_ec2_pas_json.IamInstanceProfileAssociations }}"
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+- name:                        Remove any EC2 instance profiles
+  command:                     "{{ item }}"
+  with_items:
+    - aws iam remove-role-from-instance-profile --instance-profile-name "{{ ec2_rproxy_name }}" --role-name "{{ ec2_role_name }}"
+    - aws iam remove-role-from-instance-profile --instance-profile-name "{{ ec2_dmz_name }}" --role-name "{{ ec2_role_name }}"
+    - aws iam remove-role-from-instance-profile --instance-profile-name "{{ ec2_web_name }}" --role-name "{{ ec2_role_name }}"
+    - aws iam remove-role-from-instance-profile --instance-profile-name "{{ ec2_db_name }}"  --role-name "{{ ec2_role_name }}"
+    - aws iam delete-instance-profile --instance-profile-name "{{ ec2_rproxy_name }}"
+    - aws iam delete-instance-profile --instance-profile-name "{{ ec2_dmz_name }}"
+    - aws iam delete-instance-profile --instance-profile-name "{{ ec2_web_name }}"
+    - aws iam delete-instance-profile --instance-profile-name "{{ ec2_db_name  }}"
+  ignore_errors:               yes
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+- name:                        Create reqired EC2 instance profiles
+  command:                     "{{ item }}"
+  with_items:
+    - aws iam create-instance-profile --instance-profile-name "{{ ec2_rproxy_name }}"
+    - aws iam create-instance-profile --instance-profile-name "{{ ec2_dmz_name }}"
+    - aws iam create-instance-profile --instance-profile-name "{{ ec2_web_name }}"
+    - aws iam create-instance-profile --instance-profile-name "{{ ec2_db_name  }}"
+    - aws iam add-role-to-instance-profile --role-name "{{ ec2_role_name }}" --instance-profile-name "{{ ec2_rproxy_name }}"
+    - aws iam add-role-to-instance-profile --role-name "{{ ec2_role_name }}" --instance-profile-name "{{ ec2_dmz_name }}"
+    - aws iam add-role-to-instance-profile --role-name "{{ ec2_role_name }}" --instance-profile-name "{{ ec2_web_name }}"
+    - aws iam add-role-to-instance-profile --role-name "{{ ec2_role_name }}" --instance-profile-name "{{ ec2_db_name  }}"
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+- pause:
+    seconds:                   3
+- name:                        DMZ - Create EC2 instance
+  ec2:
+    region:                    "{{ vpc_region }}"
+    group_id:                  "{{ my_dmz_sg.group_id }}"
+    keypair:                   "{{ ec2_key_name }}"
+    instance_type:             "{{ ec2_instance_type }}"
+#    instance_profile_name:    "{{ ec2_dmz_name }}"
+    user_data:                 |
+      #!/bin/sh
+      yum update -y
+      yum install tree dos2unix git -y
+    image:                     "{{ ami_name }}"
+    wait:                      yes
+    wait_timeout:              500
+    vpc_subnet_id:             "{{ dmz_pub_subnet_id }}"
+    assign_public_ip:          yes
+    instance_tags:
+      Environment:             "{{ env_name }}"
+      Name:                    "{{ ec2_dmz_name }}"
+    count_tag:
+      - Environment:           "{{ env_name }}"
+      - Name:                  "{{ ec2_dmz_name }}"
+    exact_count:               1
+    volumes:
+      - device_name:           /dev/xvda
+        volume_type:           gp2
+        volume_size:           8
+        delete_on_termination: yes
+  register:                    my_dmz
+#- debug:                      var=my_dmz
+#- name:                       Wait for SSH to come up
+#  wait_for:
+#    host:                     "{{ item.public_dns_name }}"
+#    port:                     22
+#    delay:                    60
+#    timeout:                  300
+#    state:                    started
+#  with_items:                 "{{ my_dmz.tagged_instances }}"
+#  register:                   my_cmd
+#- debug:                      var=my_cmd
+- name:                        DMZ - Wait for SSH to come up
+  wait_for:
+    host:                      "{{ my_dmz.tagged_instances[0].public_dns_name }}"
+    port:                      22
+    delay:                     60
+    timeout:                   300
+    state:                     started
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+- set_fact:
+    dmz_pub_ip:                "{{ my_dmz.tagged_instances[0].public_ip }}"
+    dmz_pri_ip:                "{{ my_dmz.tagged_instances[0].private_ip }}"
+    dmz_pub_dns:               "{{ my_dmz.tagged_instances[0].public_dns_name }}"
+    dmz_pri_dns:               "{{ my_dmz.tagged_instances[0].private_dns_name }}"
+    dmz_ami_id:                "{{ my_dmz.tagged_instances[0].id }}"
+
+- name:                        DMZ - Associate EC2 instance profile
+  command:                     aws ec2 associate-iam-instance-profile --instance-id {{ my_dmz.tagged_instances[0].id }} --iam-instance-profile Name={{ ec2_dmz_name }}
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+
+- name:                        RPXY - Create EC2 instance
+  ec2:
+    region:                    "{{ vpc_region }}"
+    group_id:                  "{{ my_rproxy_sg.group_id }}"
+    keypair:                   "{{ ec2_key_name }}"
+    instance_type:             "{{ ec2_instance_type }}"
+#    instance_profile_name:    "{{ ec2_rproxy_name }}"
+    user_data:                 |
+      #!/bin/sh
+      yum update -y
+      yum install nginx git -y
+      service nginx start
+      chkconfig nginx on
+    image:                     "{{ ami_name }}"
+    wait:                      yes
+    wait_timeout:              500
+    vpc_subnet_id:             "{{ dmz_pub_subnet_id }}"
+    assign_public_ip:          yes
+    instance_tags:
+      Environment:             "{{ env_name }}"
+      Name:                    "{{ ec2_rproxy_name }}"
+    count_tag:
+      - Environment:           "{{ env_name }}"
+      - Name:                  "{{ ec2_rproxy_name }}"
+    exact_count:               1
+    volumes:
+      - device_name:           /dev/xvda
+        volume_type:           gp2
+        volume_size:           8
+        delete_on_termination: yes
+  register:                    my_rproxy
+#- debug:                      var=my_rproxy
+- set_fact:
+    rpxy_pub_ip:               "{{ my_rproxy.tagged_instances[0].public_ip }}"
+    rpxy_pri_ip:               "{{ my_rproxy.tagged_instances[0].private_ip }}"
+    rpxy_pub_dns:              "{{ my_rproxy.tagged_instances[0].public_dns_name }}"
+    rpxy_pri_dns:              "{{ my_rproxy.tagged_instances[0].private_dns_name }}"
+    rpxy_ami_id:               "{{ my_rproxy.tagged_instances[0].id }}"
+
+- name:                        RPXY - Associate EC2 instance profile
+  command:                     aws ec2 associate-iam-instance-profile --instance-id {{ my_rproxy.tagged_instances[0].id }} --iam-instance-profile Name={{ ec2_rproxy_name }}
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+
+- name:                        Web - Create EC2 instance
+  ec2:
+    region:                    "{{ vpc_region }}"
+    group_id:                  "{{ my_web_sg.group_id }}"
+    keypair:                   "{{ ec2_key_name }}"
+    instance_type:             "{{ ec2_instance_type }}"
+#    instance_profile_name:    "{{ ec2_web_name }}"
+    user_data:                 |
+      #!/bin/sh
+      yum update -y
+      yum install httpd24 php56 -y
+      service httpd start
+      chkconfig httpd on
+    image:                     "{{ ami_name }}"
+    wait:                      yes
+    wait_timeout:              500
+    vpc_subnet_id:             "{{ web_pri_subnet_id }}"
+    assign_public_ip:          no
+    instance_tags:
+      Environment:             "{{ env_name }}"
+      Name:                    "{{ ec2_web_name }}"
+    count_tag:
+      - Environment:           "{{ env_name }}"
+      - Name:                  "{{ ec2_web_name }}"
+    exact_count:               1
+    volumes:
+      - device_name:           /dev/xvda
+        volume_type:           gp2
+        volume_size:           8
+        delete_on_termination: yes
+  register:                    my_web
+#- debug:                      var=my_web
+
+- set_fact:
+    web_pri_ip:                "{{ my_web.tagged_instances[0].private_ip }}"
+    web_pri_dns:               "{{ my_web.tagged_instances[0].private_dns_name }}"
+    web_ami_id:                "{{ my_web.tagged_instances[0].id }}"
+
+- name:                        Web - Associate EC2 instance profile
+  command:                     aws ec2 associate-iam-instance-profile --instance-id {{ my_web.tagged_instances[0].id }} --iam-instance-profile Name={{ ec2_web_name }}
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+
+- name:                        Db - Create EC2 instance
+  ec2:
+    region:                    "{{ vpc_region }}"
+    group_id:                  "{{ my_db_sg.group_id }}"
+    keypair:                   "{{ ec2_key_name }}"
+    instance_type:             "{{ ec2_instance_type }}"
+#    instance_profile_name:    "{{ ec2_db_name }}"
+    user_data:                 |
+      #!/bin/sh
+      yum update -y
+      yum install tree mysql56-server -y
+      service mysqld start
+      chkconfig mysqld on
+    image:                     "{{ ami_name }}"
+    wait:                      yes
+    wait_timeout:              500
+    vpc_subnet_id:             "{{ db_pri_subnet_id }}"
+    assign_public_ip:          no
+    instance_tags:
+      Environment:             "{{ env_name }}"
+      Name:                    "{{ ec2_db_name }}"
+    count_tag:
+      - Environment:           "{{ env_name }}"
+      - Name:                  "{{ ec2_db_name }}"
+    exact_count:               1
+    volumes:
+      - device_name:           /dev/xvda
+        volume_type:           gp2
+        volume_size:           8
+        delete_on_termination: yes
+  register:                    my_db
+#- debug:                      var=my_db
+- set_fact:
+    db_pri_ip:                 "{{ my_db.tagged_instances[0].private_ip }}"
+    db_pri_dns:                "{{ my_db.tagged_instances[0].private_dns_name }}"
+    db_ami_id:                 "{{ my_db.tagged_instances[0].id }}"
+
+- name:                        Db - Associate EC2 instance profile
+  command:                     aws ec2 associate-iam-instance-profile --instance-id {{ my_db.tagged_instances[0].id }} --iam-instance-profile Name={{ ec2_db_name }}
+  register:                    my_cmd
+#- debug:                      var=my_cmd
+
+- lineinfile:
+    state:                     present
+    create:                    yes
+    path:                      ./created_ec2_inventory.txt
+    line:                      "{{ item }}"
+  with_items:
+    - "[pri-dmz]"
+    - "{{ ec2_dmz_name }},{{ dmz_pri_ip }},{{ dmz_pri_dns }},{{ dmz_ami_id }}"
+    - "[pub-dmz]"
+    - "{{ ec2_dmz_name }},{{ dmz_pub_ip }},{{ dmz_pub_dns }},{{ dmz_ami_id }}"
+    - "[pri-rpxy]"
+    - "{{ ec2_rproxy_name }},{{ rpxy_pri_ip }},{{ rpxy_pri_dns }},{{ rpxy_ami_id }}"
+    - "[pub-rpxy]"
+    - "{{ ec2_rproxy_name }},{{ rpxy_pub_ip }},{{ rpxy_pub_dns }},{{ rpxy_ami_id }}"
+    - "[pri-web]"
+    - "{{ ec2_web_name }},{{ web_pri_ip }},{{ web_pri_dns }},{{ web_ami_id }}"
+    - "[pri-db]"
+    - "{{ ec2_db_name }},{{ db_pri_ip }},{{ db_pri_dns }},{{ db_ami_id }}"

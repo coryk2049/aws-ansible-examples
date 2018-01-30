@@ -1,0 +1,9 @@
+---
+- hosts:        local
+  connection:   local
+  gather_facts: no
+  remote_user:  ec2_user
+  become:       yes
+  roles:
+#    - vpc
+    - iam

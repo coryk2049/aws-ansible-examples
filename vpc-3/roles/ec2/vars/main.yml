@@ -1,0 +1,9 @@
+---
+ami_name:             "ami-8c1be5f6"
+ec2_instance_type:    "t2.micro"
+ec2_rproxy_name:      "A-RevProxy"
+ec2_dmz_name:         "A-DMZ"
+ec2_web_name:         "A-WebServer"
+ec2_db_name:          "A-DbServer"
+ec2_key_name:         "aws_cory1"
+ec2_role_name:        "DEV-ACCESS"

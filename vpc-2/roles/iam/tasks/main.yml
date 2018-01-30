@@ -1,0 +1,37 @@
+---
+- name:                          Create 3 new users
+  iam:
+    iam_type:                    user
+    name:                        "{{ item }}"
+    state:                       present
+    access_key_state:            create
+  with_items:                    "{{ iam_users }}"
+  register:                      my_credentials
+
+- name:                          Access keys
+  set_fact:
+    my_users:                   "{{ my_users|default([])|union([{'user_name':item.user_meta.access_keys[0].user_name, \
+                                                                 'access_key_id':item.user_meta.access_keys[0].access_key_id, \
+                                                                 'secret_access_key':item.user_meta.access_keys[0].secret_access_key}])}}"
+  with_items:                    "{{ my_credentials.results }}"
+#- debug:                         var=my_users
+
+- iam_group:
+    name:                        "{{ iam_group }}"
+    managed_policy:
+      - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+      - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      - arn:aws:iam::aws:policy/IAMReadOnlyAccess
+    users:                       "{{ iam_users }}"
+    state:                       present
+#- debug:                        var=hostvars
+
+- iam_role:
+    name:                        "{{ iam_role }}"
+    assume_role_policy_document: "{{ lookup('file', 'roles/iam/templates/access-policy.json') }}"
+    state:                       present
+    managed_policy:
+      - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+      - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      - arn:aws:iam::aws:policy/IAMReadOnlyAccess
+#- debug:                        var=hostvars
